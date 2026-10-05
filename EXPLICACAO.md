@@ -160,7 +160,7 @@ cat_id = categorias.inserir(
     CategoriaModel(0, "Bebidas", "Bebidas em geral", 0.30)
 )
 
-categorias.inserir(ProdutoModel(
+produtos.inserir(ProdutoModel(
     id=0,
     nome="Refrigerante",
     descricao="Lata 350ml",
