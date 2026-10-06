@@ -11,8 +11,8 @@ O projeto segue uma separação em **camadas**, aplicando o **padrão Repository
 
 ```mermaid
 graph TD
-    A["models.py<br/>Modelos de domínio (dataclasses)"] --> B["interfaces.py<br/>Contratos (ABC)"]
-    B --> C["repository.py<br/>Implementações em memória"]
+    A["models.py\nModelos de domínio (dataclasses)"] --> B["interfaces.py\nContratos (ABC)"]
+    B --> C["repository.py\nImplementações em memória"]
 ```
 
 A ideia central é a **inversão de dependência**:
@@ -147,7 +147,95 @@ Isso implementa a chave composta `(id_venda, id_produto)`.
 
 ---
 
-## 6. Exemplo de uso
+## 6. Caso especial: `VendaProduto` (item de venda)
+
+`VendaProduto` **não é uma entidade "dona" de dados**; é uma entidade de
+**associação**. Ele representa **uma linha de uma venda**: "na venda X,
+foram vendidas N unidades do produto Y, ao preço unitário Z".
+
+```python
+@dataclass
+class VendaProduto:
+    quantidade_vendida: int
+    preco_momento_venda: float
+    venda: VendaModel
+    produto: ProdutoModel
+```
+
+### Por que ele existe?
+
+`Venda` e `Produto` têm um relacionamento **N:N** (uma venda tem vários
+produtos; um produto aparece em várias vendas). Nesse tipo de relação
+normalmente se cria uma **entidade intermediária** — e aqui ela é
+necessária porque a relação carrega **atributos próprios**:
+
+| Campo | Papel |
+|---|---|
+| `quantidade_vendida` | Quantas unidades daquele produto foram vendidas **nesta** venda. |
+| `preco_momento_venda` | Preço **congelado** no instante da venda (snapshot). |
+| `venda` | Referência à venda (`VendaModel`). |
+| `produto` | Referência ao produto (`ProdutoModel`). |
+
+O `preco_momento_venda` é o ponto sutil: se o preço do produto mudar
+depois, o histórico da venda **não** pode mudar. Por isso se guarda o
+preço praticado na hora, em vez de ler sempre `produto.preco`.
+
+```mermaid
+graph LR
+    V["VendaModel"] --> VP["VendaProduto\nquantidade_vendida\npreco_momento_venda"]
+    P["ProdutoModel"] --> VP
+```
+
+### Por que **não** tem `id`?
+
+Porque ele é identificado pela **chave composta** (`venda`, `produto`).
+Neste modelo, um mesmo produto aparece **no máximo uma vez** por venda —
+então o par já identifica a linha unicamente. No `repository.py`:
+
+```python
+@staticmethod
+def _chave(item: VendaProduto) -> tuple[int, int]:
+    return (item.venda.id, item.produto.id)
+```
+
+E o repositório guarda em `dict[(int, int), VendaProduto]`, com métodos
+próprios em vez do CRUD padrão:
+
+| Método | O que faz |
+|---|---|
+| `inserir(item)` | Grava o item (chave = `(venda.id, produto.id)`). |
+| `listar()` | Todos os itens. |
+| `listar_por_venda(id_venda)` | Todos os itens de uma venda. |
+| `buscar_por_venda_e_produto(id_venda, id_produto)` | Um item específico. |
+| `atualizar(item)` | Atualiza um item existente. |
+| `remover(id_venda, id_produto)` | Remove um item. |
+
+### Exemplo
+
+```python
+venda_id = vendas.inserir(VendaModel(0, "2026-10-05 14:30", 0.0))
+produto_id = produtos.inserir(ProdutoModel(0, "Refrigerante", "Lata 350ml",
+                                           5.0, 100, 10, 123, 0.5, categoria))
+
+itens = VendaProdutoRepository()
+itens.inserir(VendaProduto(
+    quantidade_vendida=3,
+    preco_momento_venda=5.0,
+    venda=vendas.buscar_por_id(venda_id),
+    produto=produtos.buscar_por_id(produto_id),
+))
+
+itens.listar_por_venda(venda_id)  # [VendaProduto(quantidade_vendida=3, ...)]
+```
+
+> **Cuidado:** a chave depende de `venda.id` e `produto.id`. Então a venda
+> e o produto precisam ser **inseridos primeiro** (para receberem id). Se
+> você criar um `VendaProduto` com objetos que ainda têm `id = 0`, a chave
+> vira `(0, 0)` e todos os itens colidem no mesmo lugar do dicionário.
+
+---
+
+## 7. Exemplo de uso
 
 ```python
 from models import CategoriaModel, ProdutoModel
@@ -178,7 +266,7 @@ for produto in produtos.listar():
 
 ---
 
-## 7. Teste de contrato
+## 8. Teste de contrato
 
 Como as classes herdam das `ABC` de `interfaces.py`, se faltar a
 implementação de **qualquer** método abstrato o Python levanta um
@@ -193,7 +281,7 @@ Isso garante que todo repositório cumpra o contrato definido na interface.
 
 ---
 
-## 8. Decisões de projeto
+## 9. Decisões de projeto
 
 - **Padrão Repository/DAO:** separa a lógica de domínio da lógica de
   persistência, facilitando trocar a tecnologia de armazenamento.
@@ -209,7 +297,7 @@ Isso garante que todo repositório cumpra o contrato definido na interface.
 
 ---
 
-## 9. Próximos passos sugeridos
+## 10. Próximos passos sugeridos
 
 1. Implementar um repositório real (ex.: `sqlite_repository.py` com `sqlite3`),
    implementando as mesmas interfaces.
